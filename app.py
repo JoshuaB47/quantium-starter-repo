@@ -1,54 +1,76 @@
-## outline for this code courtesy of https://dash.plotly.com/layout
-
 # Run this app with `python app.py` and
 # visit http://127.0.0.1:8050/ in your web browser.
 
 
-from dash import Dash, html, dcc
+from dash import Dash, html, dcc, Input, Output, callback
 import plotly.express as px
 import pandas as pd
-import csv
-import time
 
-# returns list of [preChangeSalesRate, postChangeSalesRate]
-def getSalesData():
-    totalPreSales = 0
-    totalPostSales = 0
-    preDates = set()
-    postDates = set()
-    cutOffDate = time.strptime("2021-01-15", "%Y-%m-%d")
-    with open("munged.csv", newline='') as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            # if it's after or the day of the change
-            if time.strptime(row["date"], "%Y-%m-%d") >= cutOffDate:
-                totalPostSales += float(row["sales"])
-                postDates.add(row["date"])
-            else:
-                totalPreSales += float(row["sales"])
-                preDates.add(row["date"])
-    return [round(totalPreSales / len(preDates), 2), round(totalPostSales / len(postDates), 2)]
-
+# lol, using the .read_csv builtin of pandas could be cool
+data =pd.read_csv("munged.csv")
+data = data.sort_values(by="date")
+print(data.columns.values)
 app = Dash(__name__)
 
-# assume you have a "long-form" data frame
-# see https://plotly.com/python/px-arguments/ for more options
-df = pd.DataFrame({
-    "Time Period": ["Before", "After"],
-    "Sales of Pink Morsels Per Day": getSalesData(),
-    "Time": ["Before January 15th, 2021", "After January 15th, 2021"]
-})
 
-fig = px.bar(df, x="Time Period", y="Sales of Pink Morsels Per Day", color="Time", barmode="group")
 
+# create the header
+header = html.H1(
+    "Pink Morsel Sales Data",
+    id="header"
+)
+
+# our 5 radio options for regions. We want all to be the default
+radioOptions =\
+    dcc.RadioItems(["north", "south", "east", "west", "all"],
+                   "all",
+                   id='region')
+
+checkBoxRounding = dcc.Checklist(["Want a Moving Average?"], id="rounding")
+sliderForWindow = dcc.Slider(0, 31, 1,
+               value=7,
+               id='rollingLength'
+                )
+# want the header then visualization
 app.layout = html.Div(children=[
-    html.H1(children='Pink Morsel Sales Per Day: Comparing Pre- and Post- Jan 15, 2021'),
-
-    dcc.Graph(
-        id='example-graph',
-        figure=fig
-    )
+    header,
+    radioOptions,
+    checkBoxRounding,
+    sliderForWindow,
+    dcc.Graph(id="visualization")
 ])
 
+@callback(
+    Output('visualization', 'figure'),
+    Input('region', 'value'),
+    Input('rounding', 'value'),
+    Input('rollingLength', 'value'))
+def makeVisualization(regionToDisplay, roundBool, rollingLength):
+    xDay = int(rollingLength)
+    # if we're looking at all, take sum of all regions
+    if regionToDisplay == "all":
+        # sum all data from same date
+        newData = data.groupby("date", as_index=False)["sales"].sum()
+        # if we want a xDay day moving average
+        if roundBool:
+            newData["sales"] = newData["sales"].rolling(window=xDay, min_periods=0).mean()
+        line_chart = px.line(newData, x="date", y="sales", title="Pink Morsel sale for all regions")
+
+        line_chart.update_layout()
+
+        return line_chart
+    else:
+        # only look at data that corresponds to the proper region
+        newData = data[data["region"] == regionToDisplay]
+        # if we want a xDay day moving average
+        if roundBool:
+            # take the xDay day average for sales
+            newData["sales"] = newData["sales"].rolling(window=xDay, min_periods=0).mean()
+        line_chart = px.line(newData, x="date", y="sales", title="Pink Morsel sale for the " + regionToDisplay + " region")
+
+        line_chart.update_layout()
+        return line_chart
+
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run_server()
